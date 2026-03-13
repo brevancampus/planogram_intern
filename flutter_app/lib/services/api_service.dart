@@ -8,7 +8,7 @@ class ApiService {
   final Dio _dio;
   final Logger _logger = Logger();
 
-  ApiService({String baseUrl = 'http://10.218.158.180:8000'})
+  ApiService({String baseUrl = 'http://10.218.158.207:8000'})
       : _baseUrl = baseUrl,
         _dio = Dio(
           BaseOptions(
@@ -16,6 +16,8 @@ class ApiService {
             connectTimeout: const Duration(seconds: 10),
             receiveTimeout: const Duration(seconds: 10),
             contentType: Headers.jsonContentType,
+            // Don't throw on 4xx/5xx - let us handle the response
+            validateStatus: (status) => status != null && status < 600,
           ),
         );
 
@@ -140,20 +142,34 @@ class ApiService {
         onProgress?.call(i + 1, imageFiles.length);
       }
 
-      // Build FormData yang benar untuk List of Files
-      final formData = FormData.fromMap({
-        'files': multipartFileList, // 'files' harus sama persis dengan FastAPI
-      });
+      // Build FormData dengan menambahkan files satu-satu
+      // (Dio.FormData.fromMap tidak handle List<MultipartFile> dengan benar)
+      final formData = FormData();
+      for (var multipartFile in multipartFileList) {
+        formData.files.add(MapEntry('files', multipartFile));
+        _logger.i('✅ Added file: ${multipartFile.filename}');
+      }
 
-      _logger.i('FormData ready. Sending to /api/audit-multiple...');
+      _logger.i('🔍 FormData details:');
+      _logger.i('   - Total files: ${formData.files.length}');
+      _logger.i('   - Fields: ${formData.fields.map((f) => "${f.key}=${f.value}").toList()}');
+      _logger.i('   - Files: ${formData.files.map((f) => "${f.key}:${f.value.filename}").toList()}');
+      _logger.i('📤 Sending to /api/audit-multiple...');
 
       // Send POST request dengan FormData
+      // Catatan: Jangan override contentType - biarkan Dio detect FormData secara otomatis
       final response = await _dio.post(
         '/api/audit-multiple',
         data: formData,
       );
 
       _logger.i('Multi-photo audit response: ${response.statusCode}');
+      
+      if (response.statusCode != 200) {
+        _logger.e('❌ Server error response: ${response.data}');
+        throw Exception('Server returned ${response.statusCode}: ${response.data}');
+      }
+      
       final data = ValidationResponse.fromJson(response.data);
       return data;
     } catch (e) {

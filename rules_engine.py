@@ -56,62 +56,62 @@ class PlanogramValidator:
     
     def _cluster_into_rows(self, products: List[Dict]) -> List[List[Dict]]:
         """
-        Private method untuk row clustering (DRY Principle).
-        
+        Private method untuk row clustering (mengelompokkan produk per baris berdasarkan Y-coordinate).
+
         Logika:
-        1. Hitung y_center, x_center, dan tinggi produk
+        1. Hitung y_center, x_center untuk setiap produk
         2. Hitung Y_THRESHOLD = 0.5 * median_height
-        3. Urutkan produk berdasarkan y_center (paling atas ke paling bawah)
-        4. Lakukan clustering: jika selisih y_center < Y_THRESHOLD, masuk baris sama
-        5. Urutkan produk dalam masing-masing baris berdasarkan x_center (kiri ke kanan)
+        3. Urutkan produk berdasarkan y_center (atas → bawah)
+        4. Clustering: jika selisih y_center < Y_THRESHOLD, masuk baris sama
+        5. Dalam setiap baris, urutkan berdasarkan x_center (kiri → kanan)
         6. Return List of Lists (2D array)
-        
+
         Args:
             products: List of product detection dicts
-            
+
         Returns:
             List[List[Dict]]: Products grouped by rows, sorted left-to-right within each row
         """
         if not products:
             return []
-        
+
         # Step 1: Hitung y_center, x_center, tinggi untuk semua produk
         products_with_coords = []
         heights = []
-        
+
         for product in products:
             x1, y1, x2, y2 = product["bbox"]
             x_center = (x1 + x2) / 2.0
             y_center = (y1 + y2) / 2.0
             height = y2 - y1
             heights.append(height)
-            
+
             products_with_coords.append({
                 "product": product,
                 "x_center": x_center,
                 "y_center": y_center,
                 "height": height
             })
-        
+
         # Step 2: Hitung Y_THRESHOLD = 0.5 * median_height
         heights_sorted = sorted(heights)
         median_height = heights_sorted[len(heights_sorted) // 2]
         y_threshold = 0.5 * median_height
-        
+
         # Step 3: Urutkan berdasarkan y_center (dari atas ke bawah)
         products_sorted_by_y = sorted(products_with_coords, key=lambda p: p["y_center"])
-        
+
         # Step 4: Clustering berdasarkan Y_THRESHOLD
         rows = []
         current_row = []
-        
+
         for i, prod in enumerate(products_sorted_by_y):
             if i == 0:
                 current_row.append(prod)
             else:
                 prev_prod = products_sorted_by_y[i - 1]
                 y_diff = abs(prod["y_center"] - prev_prod["y_center"])
-                
+
                 if y_diff < y_threshold:
                     # Masuk ke baris yang sama
                     current_row.append(prod)
@@ -119,76 +119,105 @@ class PlanogramValidator:
                     # Buat baris baru
                     rows.append(current_row)
                     current_row = [prod]
-        
+
         # Tambahkan baris terakhir
         if current_row:
             rows.append(current_row)
-        
+
         # Step 5: Sorting berdasarkan x_center dalam masing-masing baris
         for row in rows:
             row.sort(key=lambda p: p["x_center"])
-        
+
         # Return original products, bukan products_with_coords
         result_rows = []
         for row in rows:
             result_rows.append([p["product"] for p in row])
-        
+
         return result_rows
     
     def cek_sos(self) -> Dict:
         """
-        Validasi Parameter 1: Share of Shelf (SoS)
+        Validasi Parameter 1: Share of Shelf (SoS) berdasarkan FACING COUNT (FMCG Standard).
+
+        Rumus: SoS% = (Jumlah facing produk / Total facing kategori) * 100%
         
-        Rumus: SoS% = (Jumlah pixel produk / Total pixel rak) * 100%
-        Toleransi: ±5% (toleransi lebih longgar untuk variasi placement)
+        Toleransi: ±5% (toleransi untuk variasi placement)
+        
+        Catatan: Menggunakan facing count (jumlah bounding boxes), bukan pixel width.
+        Category mapping dari target untuk grouping produk per kategori.
         """
         sos_target = self.target.get("sos_target", {})
-        
-        total_pixel = sum(
-            hitung_lebar_produk(p["bbox"][0], p["bbox"][2])
-            for p in self.products
-        )
-        
-        if total_pixel == 0:
+        category_mapping = self.target.get("category_mapping", {})
+
+        if not self.products:
             self.results["sos"] = {
                 "status": "FAIL",
                 "parameter": 1,
-                "reason": "Total pixel = 0 (tidak ada produk)"
+                "reason": "Tidak ada produk terdeteksi"
             }
             return self.results["sos"]
-        
-        sos_actual = {}
-        pixel_per_product = defaultdict(float)
-        
+
+        # Step 1: Count facing per produk (jumlah bounding boxes)
+        facing_per_product = defaultdict(int)
         for product in self.products:
             name = product["product_name"]
-            pixel = hitung_lebar_produk(product["bbox"][0], product["bbox"][2])
-            pixel_per_product[name] += pixel
-        
-        for name, pixel in pixel_per_product.items():
-            sos_actual[name] = hitung_persentase_sos(pixel, total_pixel)
-        
+            facing_per_product[name] += 1
+
+        # Step 2: Count facing per kategori menggunakan category_mapping
+        facing_per_category = defaultdict(int)
+        for product_name, facing_count in facing_per_product.items():
+            # Get category dari mapping, default ke product name jika tidak ada mapping
+            category = category_mapping.get(product_name, product_name)
+            facing_per_category[category] += facing_count
+
+        # Step 3: Hitung total facing per kategori
+        total_facing_per_category = {
+            category: count
+            for category, count in facing_per_category.items()
+        }
+
+        # Step 4: Validasi SoS untuk setiap produk target
         status = "PASS"
         details = {}
-        
-        for product_name in sos_target:
-            actual = sos_actual.get(product_name, 0.0)
-            target = sos_target[product_name]
-            # Toleransi SoS: ±5%
-            is_ok = abs(actual - target) <= 5.0
+
+        for product_name, target_sos_percent in sos_target.items():
+            # Get facing count untuk produk ini
+            actual_facing = facing_per_product.get(product_name, 0)
+            
+            # Get kategori produk ini
+            category = category_mapping.get(product_name, product_name)
+            
+            # Get total facing kategori
+            total_category_facing = total_facing_per_category.get(category, 1)
+            
+            # Hitung SoS% = (facing produk / total facing kategori) * 100
+            if total_category_facing > 0:
+                actual_sos_percent = (actual_facing / total_category_facing) * 100.0
+            else:
+                actual_sos_percent = 0.0
+
+            # Toleransi ±5%
+            is_ok = abs(actual_sos_percent - target_sos_percent) <= 5.0
+            
             details[product_name] = {
-                "actual": round(actual, 2),
-                "target": target,
+                "actual_percentage": round(actual_sos_percent, 2),
+                "target_percentage": target_sos_percent,
+                "actual_facing": actual_facing,
+                "category_total_facing": total_category_facing,
+                "category": category,
                 "status": "✓" if is_ok else "✗"
             }
+            
             if not is_ok:
                 status = "FAIL"
-        
+
         self.results["sos"] = {
             "status": status,
             "parameter": 1,
             "details": details,
-            "total_pixel": total_pixel
+            "facing_per_product": dict(facing_per_product),
+            "facing_per_category": dict(facing_per_category),
+            "category_mapping": category_mapping
         }
         return self.results["sos"]
     

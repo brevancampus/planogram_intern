@@ -35,6 +35,15 @@ PLANOGRAM_TARGET: Dict = {
     },
     
     # ========================================================================
+    # Parameter 1: Category Mapping - Grouping produk berdasarkan kategori
+    # ========================================================================
+    "category_mapping": {
+        "Indomie": "Mie Instan",     # Mapping produk ke kategori
+        "Aqua": "Minuman",            # Mapping produk ke kategori
+        "Sprite": "Minuman"           # Mapping produk ke kategori
+    },
+    
+    # ========================================================================
     # Parameter 2: Facing & OOS
     # ========================================================================
     "facing_target": {

@@ -30,7 +30,7 @@ class YOLOScanner:
         Inisialisasi scanner dengan model YOLO.
         
         Args:
-            model_path: Path ke file model .pt (e.g., 'best (1).pt')
+            model_path: Path ke file model .pt (e.g., 'best.pt')
             conf_threshold: Confidence minimum untuk deteksi (default 0.5)
         
         Raises:
@@ -156,7 +156,7 @@ class YOLOScanner:
 
 def scan_with_yolo(
     image_path: str,
-    model_path: str = "best (1).pt",
+    model_path: str = r"C:\Users\brian\Downloads\plano_gram\models\best.pt",
     conf_threshold: float = 0.5
 ) -> List[Dict]:
     """
@@ -164,7 +164,7 @@ def scan_with_yolo(
     
     Args:
         image_path: Path ke gambar
-        model_path: Path ke model .pt (default: best (1).pt)
+        model_path: Path ke model .pt (default: best.pt)
         conf_threshold: Confidence threshold (default: 0.5)
     
     Returns:
@@ -175,3 +175,102 @@ def scan_with_yolo(
     """
     scanner = YOLOScanner(model_path, conf_threshold)
     return scanner.scan_image(image_path)
+
+
+def scan_multiple_images_with_stitching(
+    image_paths: List[str],
+    model_path: str = r"C:\Users\brian\Downloads\plano_gram\models\best.pt",
+    conf_threshold: float = 0.5
+) -> List[Dict]:
+    """
+    Scan multiple images (e.g., Left, Center, Right shelf photos) with X-coordinate stitching.
+    
+    Fixes coordinate reset bug by adding X-offset to each image's detections based on
+    the cumulative width of all previous images. This ensures Left-to-Right sequence logic works.
+    
+    Args:
+        image_paths: List of image file paths to process in order (L→C→R)
+        model_path: Path to YOLO model .pt file
+        conf_threshold: Confidence threshold for detections (default 0.5)
+    
+    Returns:
+        List of all detections with stitched X-coordinates
+    
+    Raises:
+        FileNotFoundError: If image or model not found
+        RuntimeError: If detection fails
+    """
+    import cv2
+    
+    scanner = YOLOScanner(model_path, conf_threshold)
+    all_detections: List[Dict] = []
+    current_x_offset = 0
+    
+    for image_idx, image_path in enumerate(image_paths):
+        try:
+            # Step 1: Read image to get width
+            image = cv2.imread(image_path)
+            if image is None:
+                raise FileNotFoundError(f"Failed to read image: {image_path}")
+            
+            image_height, image_width = image.shape[:2]
+            
+            print(f"\n[{image_idx + 1}/{len(image_paths)}] Processing: {Path(image_path).name}")
+            print(f"  Dimensions: {image_width}x{image_height}px | X-offset: {current_x_offset}px")
+            
+            # Step 2: Run YOLO detection
+            results = scanner.model.predict(
+                source=image_path,
+                conf=scanner.conf_threshold,
+                save=False,
+                verbose=False
+            )
+            
+            # Step 3: Convert results to standard format
+            detections = scanner._convert_results(results)
+            
+            # Step 4: Apply X-offset to all detections for coordinate stitching
+            for detection in detections:
+                x1, y1, x2, y2 = detection["bbox"]
+                
+                # Shift X-coordinates by cumulative offset
+                detection["bbox"] = (
+                    x1 + current_x_offset,
+                    y1,
+                    x2 + current_x_offset,
+                    y2
+                )
+                
+                # Add metadata for debugging
+                detection["photo_index"] = image_idx
+                detection["photo_source"] = Path(image_path).name
+                detection["x_offset_applied"] = current_x_offset
+            
+            all_detections.extend(detections)
+            
+            print(f"  ✓ {len(detections)} objects detected")
+            
+            # Step 5: Update offset for next image
+            current_x_offset += image_width
+            
+        except FileNotFoundError as e:
+            print(f"  ✗ File not found: {str(e)}")
+            raise
+        except Exception as e:
+            print(f"  ✗ Error processing image: {str(e)}")
+            raise RuntimeError(f"Multi-photo scan failed at image {image_idx + 1}: {str(e)}")
+    
+    print(f"\n{'='*70}")
+    print(f"✓ MULTI-PHOTO AUDIT COMPLETE")
+    print(f"  Total detections: {len(all_detections)}")
+    print(f"  Stitched width: {current_x_offset}px across {len(image_paths)} photos")
+    print(f"{'='*70}\n")
+    
+    return all_detections
+
+
+# Test model classes
+model = YOLO(r'C:\Users\brian\Downloads\plano_gram\models\best.pt')
+print("📊 MODEL CLASSES:")
+for class_id, class_name in model.names.items():
+    print(f"  {class_id}: {class_name}")

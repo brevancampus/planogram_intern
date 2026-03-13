@@ -98,6 +98,7 @@ class MultiPhotoAuditResponse(BaseModel):
     photos_failed: int
     total_detections: int
     photo_results: List[AuditPhotoResult]
+    detections: List[DetectionItem]  # ✅ Actual detection objects for UI rendering
     summary: ComplianceSummary
     parameters: Dict[str, Dict]
     timestamp: str
@@ -366,7 +367,8 @@ async def audit_multiple_photos(files: List[UploadFile] = File(...)):
                 
                 # Initialize YOLO scanner (jika belum ada global instance)
                 # NOTE: Untuk production, gunakan singleton pattern
-                scanner = YOLOScanner(model_path="best.pt", conf_threshold=0.5)
+                # ✅ Lowered threshold to 0.25 for better sensitivity on scaled images
+                scanner = YOLOScanner(model_path="C:\\Users\\brian\\Downloads\\plano_gram\\models\\best.pt", conf_threshold=0.25)
                 detections = scanner.scan_image(str(file_path), save_annotated=False)
                 
                 # Append ke all_detections
@@ -424,7 +426,26 @@ async def audit_multiple_photos(files: List[UploadFile] = File(...)):
         print(f"Compliance Score: {score:.1f}% - Grade: {grade}\n")
         
         # ====================================================================
-        # STEP 4: Build response
+        # STEP 4: Convert detections to proper DetectionItem objects
+        # (Scanner returns Dict with tuple bbox, need BBox object for Pydantic)
+        # ====================================================================
+        detection_items = [
+            DetectionItem(
+                product_name=d['product_name'],
+                confidence=d['confidence'],
+                bbox=BBox(
+                    x1=d['bbox'][0],
+                    y1=d['bbox'][1],
+                    x2=d['bbox'][2],
+                    y2=d['bbox'][3]
+                ),
+                class_name=d['class_name']
+            )
+            for d in all_detections
+        ]
+        
+        # ====================================================================
+        # STEP 5: Build response
         # ====================================================================
         response = MultiPhotoAuditResponse(
             status="success",
@@ -433,6 +454,7 @@ async def audit_multiple_photos(files: List[UploadFile] = File(...)):
             photos_failed=photos_failed,
             total_detections=len(all_detections),
             photo_results=photo_results,
+            detections=detection_items,  # ✅ Use converted DetectionItem objects
             summary=ComplianceSummary(
                 pass_count=summary["pass_count"],
                 fail_count=summary["fail_count"],
