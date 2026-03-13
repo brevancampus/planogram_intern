@@ -1,4 +1,4 @@
-# planogram_gram 🛒📊
+# planogram_v2 🛒📊
 
 **Complete Full-Stack Planogram Compliance Validation System**
 
