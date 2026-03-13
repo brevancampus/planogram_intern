@@ -1,0 +1,23 @@
+# Python Dependencies for Planogram Validation System
+
+# Core System
+python-multipart==0.0.6
+
+# API & Web Framework
+fastapi==0.104.1
+uvicorn==0.24.0
+starlette==0.27.0
+pydantic==2.5.0
+pydantic-core==2.14.1
+
+# YOLO & Computer Vision
+ultralytics==8.0.195
+opencv-python==4.8.1.78
+pillow==10.1.0
+numpy==1.24.3
+
+# Type Hints & Validation
+typing-extensions==4.8.0
+
+# Utilities
+python-dotenv==1.0.0
